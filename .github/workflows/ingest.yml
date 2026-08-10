@@ -1,0 +1,67 @@
+name: ingest
+on:
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: "Parallel workers (1-20)"
+        default: "20"
+      cc_index_url:
+        description: "Common Crawl warc.paths.gz URL"
+        default: "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-30/warc.paths.gz"
+  schedule:
+    # Watchdog re-run every 6h. Fresh runners pick up any unclaimed WARCs.
+    - cron: "17 */6 * * *"
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Ensure WARC list on R2
+        env:
+          R2_ACCOUNT_ID:       ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:    ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:           ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:           ${{ secrets.R2_PREFIX }}
+          CC_INDEX_URL:        ${{ github.event.inputs.cc_index_url }}
+        run: node scripts/build-warc-list.mjs
+      - name: Progress
+        env:
+          R2_ACCOUNT_ID:       ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:    ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:           ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:           ${{ secrets.R2_PREFIX }}
+        run: node scripts/progress.mjs || true
+
+  workers:
+    needs: bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Ingest loop
+        env:
+          WORKER_ID:            "w${{ matrix.worker }}-${{ github.run_id }}"
+          BUDGET_MIN:           "320"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node scripts/worker-loop.mjs

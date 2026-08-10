@@ -1,0 +1,18 @@
+{
+  "name": "lettuce-discovery-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build-warc-list": "node scripts/build-warc-list.mjs",
+    "claim": "node scripts/claim-next.mjs",
+    "parse": "node scripts/parse-warc.mjs",
+    "worker": "node scripts/worker-loop.mjs",
+    "progress": "node scripts/progress.mjs",
+    "reshard": "node scripts/reshard.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0"
+  }
+}
