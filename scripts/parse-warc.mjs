@@ -9,56 +9,11 @@
 // Output: raw/{id}.ndjson.gz on R2, plus a summary line to stdout.
 
 import { putObject } from "./r2.mjs";
+import { extractDoc, isGood } from "./lib-doc.mjs";
 import { gzipSync } from "node:zlib";
 
 const CC_HOST = "https://data.commoncrawl.org/";
-const MIN_TEXT_LEN = 200;
-const MAX_TEXT_LEN = 2000;
-const BAD_TLDS = /\.(zip|onion)$/i;
-const ADULT_WORDS = /\b(porn|xxx|escort|nsfw|hentai)\b/i;
-
-function stripTags(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractDoc(url, html) {
-  const titleM = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const descM = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
-             || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
-  const canonM = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
-  const langM = html.match(/<html[^>]+lang=["']([a-zA-Z-]+)["']/i);
-
-  const title = titleM ? stripTags(titleM[1]).slice(0, 200) : "";
-  const desc  = descM  ? descM[1].slice(0, 400) : "";
-  const canon = canonM ? canonM[1] : url;
-  const lang  = langM  ? langM[1].toLowerCase().split("-")[0] : "";
-
-  const bodyStart = html.search(/<body[\s>]/i);
-  const body = bodyStart >= 0 ? html.slice(bodyStart, bodyStart + 40000) : html.slice(0, 40000);
-  const text = stripTags(body).slice(0, MAX_TEXT_LEN);
-
-  return { u: canon, t: title, d: desc, c: text, l: lang };
-}
-
-function isGood(doc) {
-  if (!doc.t || doc.t.length < 5) return false;
-  if (!doc.c || doc.c.length < MIN_TEXT_LEN) return false;
-  if (doc.l && doc.l !== "en") return false;
-  if (BAD_TLDS.test(doc.u)) return false;
-  if (ADULT_WORDS.test(doc.u) || ADULT_WORDS.test(doc.t)) return false;
-  return true;
-}
+const ALLOWED_LANGS = (process.env.ALLOWED_LANGS || "en").split(",");
 
 async function* iterWarcRecords(stream) {
   // Streaming WARC parser. Delegates to zlib for gzip decoding.
@@ -125,7 +80,7 @@ async function main() {
         const html = extractHttpBody(rec.body);
         if (!html) continue;
         const doc = extractDoc(rec.uri, html);
-        if (isGood(doc)) { docs.push(doc); kept++; }
+        if (isGood(doc, ALLOWED_LANGS)) { docs.push(doc); kept++; }
       } catch {}
       if (kept >= 60000) break; // safety cap per WARC
     }

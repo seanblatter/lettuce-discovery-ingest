@@ -24,15 +24,15 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: npm ci --prefer-offline --no-audit || npm i
-      - name: Ensure WARC list on R2
+      - name: Ensure multi-dump WARC list on R2 (last 4 monthly CC dumps)
         env:
           R2_ACCOUNT_ID:       ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID:    ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET:           ${{ secrets.R2_BUCKET }}
           R2_PREFIX:           ${{ secrets.R2_PREFIX }}
-          CC_INDEX_URL:        ${{ github.event.inputs.cc_index_url }}
-        run: node scripts/build-warc-list.mjs
+          CC_DUMPS:            "CC-MAIN-2026-30,CC-MAIN-2026-26,CC-MAIN-2026-22,CC-MAIN-2026-18"
+        run: node scripts/multi-dump.mjs
       - name: Progress
         env:
           R2_ACCOUNT_ID:       ${{ secrets.R2_ACCOUNT_ID }}
