@@ -1,0 +1,12 @@
+name = "lettuce-vision-shard-cache"
+main = "shard-cache-worker.js"
+compatibility_date = "2026-08-01"
+workers_dev = true
+
+# Route (uncomment after DNS is set up):
+# routes = [
+#   { pattern = "shards.lettuce.vision/*", zone_name = "lettuce.vision" }
+# ]
+
+[observability.logs]
+enabled = true

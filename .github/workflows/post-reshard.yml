@@ -1,0 +1,56 @@
+name: post-reshard
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["reshard"]
+    types: [completed]
+
+concurrency: { group: post-reshard, cancel-in-progress: false }
+
+jobs:
+  bloom-and-delta:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Build per-shard Bloom filters (item 9)
+        env:
+          NUM_SHARDS: "128"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/bloom-index.mjs
+      - name: Build delta shards (item 10)
+        env:
+          NUM_SHARDS: "128"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/delta-shards.mjs
+
+  cold-tier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    needs: bloom-and-delta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Migrate stale versions to cold prefix (item 11)
+        env:
+          COLD_AGE_DAYS: "180"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/cold-tier.mjs
