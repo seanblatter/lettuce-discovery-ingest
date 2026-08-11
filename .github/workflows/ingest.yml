@@ -59,6 +59,7 @@ jobs:
         env:
           WORKER_ID:            "w${{ matrix.worker }}-${{ github.run_id }}"
           BUDGET_MIN:           "320"
+          NODE_OPTIONS:         "--max-old-space-size=6144"
           R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
