@@ -7,6 +7,12 @@ name: phase2-reprocess
 # these up because CC_DUMPS was updated.
 on:
   workflow_dispatch: {}
+  schedule:
+    # Auto-fire Friday Aug 14 2026 at 14:00 UTC (1h after phase-1 est. completion).
+    # The reset-claims step is idempotent — if phase-1 hasn't finished, it just
+    # deletes 0 claims (workers still running hold their own claims fresh via
+    # 5-min TTL). After Aug 14 this cron becomes a no-op (workers loop cleanly).
+    - cron: "0 14 14 8 *"
 
 jobs:
   reset:
