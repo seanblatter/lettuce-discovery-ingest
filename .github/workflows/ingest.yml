@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: "Parallel workers (1-20)"
-        default: "20"
+        description: "Parallel workers (1-60)"
+        default: "60"
       cc_index_url:
         description: "Common Crawl warc.paths.gz URL"
         default: "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-30/warc.paths.gz"
@@ -31,7 +31,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET:           ${{ secrets.R2_BUCKET }}
           R2_PREFIX:           ${{ secrets.R2_PREFIX }}
-          CC_DUMPS:            "CC-MAIN-2026-30,CC-MAIN-2026-26,CC-MAIN-2026-22,CC-MAIN-2026-18"
+          CC_DUMPS:            "CC-MAIN-2026-30,CC-MAIN-2026-26,CC-MAIN-2026-22,CC-MAIN-2026-18,CC-MAIN-2026-14,CC-MAIN-2026-09"
         run: node scripts/multi-dump.mjs
       - name: Progress
         env:
@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        worker: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+        worker: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,4 +64,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET:            ${{ secrets.R2_BUCKET }}
           R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+          ALLOWED_LANGS:        "en,es,fr,de,pt,it,nl,ja,zh,ko,ru,ar,hi,tr,pl,sv,id,vi"
+          MIN_TEXT_LEN:         "120"
+          STORAGE_CAP_GB:       "3300"
         run: node scripts/worker-loop.mjs

@@ -1,0 +1,30 @@
+name: phase2-reprocess
+# Manually kick this after the phase-1 ingest run completes.
+# It deletes all claim markers so the standard ingest workflow re-parses every
+# WARC (including the 4,383 phase-1 already-processed ones) under the new
+# permissive filters (18 languages, MIN_TEXT_LEN=120). It also adds the two
+# extra CC dumps (2026-14, 2026-09) — bootstrap in ingest.yml already picks
+# these up because CC_DUMPS was updated.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Reset claim markers
+        env:
+          R2_ACCOUNT_ID:       ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:    ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:           ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:           ${{ secrets.R2_PREFIX }}
+        run: node scripts/reset-claims.mjs
+      - name: Kick ingest workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run ingest -R "${{ github.repository }}"

@@ -6,7 +6,7 @@
 import { listPrefix, getObjectStream, putObject, deleteObject } from "./r2.mjs";
 import { createGunzip, gzipSync } from "node:zlib";
 
-const STORAGE_CAP_GB = Number(process.env.STORAGE_CAP_GB || 800); // $12/mo cap
+const STORAGE_CAP_GB = Number(process.env.STORAGE_CAP_GB || 3300); // ~$50/mo cap (R2 $0.015/GB, 10 GB free)
 const SIMHASH_HAMMING = 3;   // treat as duplicate if within 3 bits
 const PRUNE_TARGET_GB = STORAGE_CAP_GB * 0.95; // prune to 95% of cap for headroom
 

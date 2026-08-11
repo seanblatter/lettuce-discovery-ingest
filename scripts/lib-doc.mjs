@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 
 const BAD_TLDS = /\.(zip|onion)$/i;
 const ADULT_WORDS = /\b(porn|xxx|escort|nsfw|hentai|cams?)\b/i;
-const MIN_TEXT_LEN = 200;
+const MIN_TEXT_LEN = Number(process.env.MIN_TEXT_LEN || 120);
 const MAX_TEXT_LEN = 2000;
 
 export function stripTags(html) {

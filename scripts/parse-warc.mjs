@@ -13,7 +13,7 @@ import { extractDoc, isGood } from "./lib-doc.mjs";
 import { gzipSync } from "node:zlib";
 
 const CC_HOST = "https://data.commoncrawl.org/";
-const ALLOWED_LANGS = (process.env.ALLOWED_LANGS || "en").split(",");
+const ALLOWED_LANGS = (process.env.ALLOWED_LANGS || "en,es,fr,de,pt,it,nl,ja,zh,ko,ru,ar,hi,tr,pl,sv,id,vi").split(",");
 
 async function* iterWarcRecords(stream) {
   // Streaming WARC parser. Delegates to zlib for gzip decoding.
