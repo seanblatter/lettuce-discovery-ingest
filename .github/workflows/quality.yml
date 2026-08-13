@@ -2,7 +2,7 @@ name: quality
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * 0"   # weekly Sunday 4am UTC
+    - cron: "30 3 * * *"   # daily 03:30 UTC — pagerank + dedup + cap
 
 concurrency: { group: quality, cancel-in-progress: false }
 
@@ -33,7 +33,7 @@ jobs:
         with: { node-version: "20" }
       - run: npm ci --prefer-offline --no-audit || npm i
       - env:
-          STORAGE_CAP_GB: "800"
+          STORAGE_CAP_GB: "2100"
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

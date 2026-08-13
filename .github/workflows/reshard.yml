@@ -1,6 +1,8 @@
 name: reshard
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"     # nightly 04:00 UTC — full reshard + dedup
 concurrency:
   group: reshard
   cancel-in-progress: false

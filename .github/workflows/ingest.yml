@@ -67,5 +67,5 @@ jobs:
           R2_PREFIX:            ${{ secrets.R2_PREFIX }}
           ALLOWED_LANGS:        "en,es,fr,de,pt,it,nl,ja,zh,ko,ru,ar,hi,tr,pl,sv,id,vi"
           MIN_TEXT_LEN:         "120"
-          STORAGE_CAP_GB:       "3300"
+          STORAGE_CAP_GB:       "2100"
         run: node scripts/worker-loop.mjs

@@ -1,0 +1,115 @@
+# Heartbeat sources — small parasitic ingesters that keep the index fresh.
+# Budgeted so combined output stays under ~30 GB/mo (well below the 600 GB/mo cap).
+name: heartbeat
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"   # certstream every 15 min (CT log tail)
+    - cron: "7 * * * *"      # gdelt hourly (news)
+    - cron: "23 6 * * 0"     # dns zones weekly Sunday 06:23 UTC
+    - cron: "40 5 1 * *"     # httparchive monthly on the 1st at 05:40 UTC
+
+concurrency: { group: heartbeat, cancel-in-progress: false }
+
+jobs:
+  certstream:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: CT log tail → seed domains
+        env:
+          LOOKBACK_MIN:         "20"
+          MAX_DOMAINS:          "8000"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node scripts/certstream-ingest.mjs
+
+  gdelt:
+    if: github.event.schedule == '7 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: GDELT last 2h → seed URLs
+        env:
+          HOURS:                "2"
+          MAX_URLS:             "60000"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node scripts/gdelt-ingest.mjs
+
+  dns-zones:
+    if: github.event.schedule == '23 6 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: DNS zone files → seed domains
+        env:
+          MAX_DOMAINS_PER_TLD:  "500000"
+          CZDS_TOKEN:           ${{ secrets.CZDS_TOKEN }}
+          CZDS_TLDS:            ${{ vars.CZDS_TLDS }}   # e.g. "com,net,org"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node scripts/dns-zones-ingest.mjs
+
+  httparchive:
+    if: github.event.schedule == '40 5 1 * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: HTTP Archive BigQuery → ranking signals
+        env:
+          MAX_ROWS:             "50000000"
+          GCP_SA_KEY:           ${{ secrets.GCP_SA_KEY }}
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/httparchive-signals.mjs
+
+  # Delta-shard every heartbeat so hot tier stays queryable within minutes.
+  delta:
+    needs: []
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Delta-reshard hot tier (fast, incremental)
+        env:
+          NUM_SHARDS:           "128"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/delta-shards.mjs
