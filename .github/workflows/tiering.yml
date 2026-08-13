@@ -1,0 +1,93 @@
+# Storage tiering — keeps R2 bill flat by moving cold data to B2 + Internet Archive.
+# Runs weekly. Combined with the 2100 GB storage cap this bounds R2 permanently.
+#
+# Requires repo secrets:
+#   B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET       (Backblaze warm tier)
+#   IA_ACCESS_KEY, IA_SECRET_KEY                   (Internet Archive cold tier)
+# If either set is missing, that job is skipped safely.
+name: tiering
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"    # weekly Monday 05:17 UTC
+
+concurrency: { group: tiering, cancel-in-progress: false }
+
+jobs:
+  parquet-convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Install DuckDB
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y unzip
+          curl -sSL https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip -o /tmp/d.zip
+          unzip -qo /tmp/d.zip -d /usr/local/bin
+          duckdb --version
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: NDJSON.gz → Parquet+Zstd (shards older than 7d)
+        env:
+          PARQUET_PREFIX:       "shards/"
+          PARQUET_MIN_AGE_DAYS: "7"
+          PARQUET_MAX_FILES:    "500"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/parquet-convert.mjs
+
+  b2-warm:
+    needs: parquet-convert
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Move 30-180d shards → Backblaze B2
+        env:
+          WARM_PREFIX:          "shards/"
+          WARM_MIN_AGE_DAYS:    "30"
+          WARM_MAX_AGE_DAYS:    "180"
+          WARM_MAX_BYTES:       "53687091200"     # 50 GB per run
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+          B2_KEY_ID:            ${{ secrets.B2_KEY_ID }}
+          B2_APPLICATION_KEY:   ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET:            ${{ secrets.B2_BUCKET }}
+          B2_ENDPOINT:          ${{ vars.B2_ENDPOINT }}
+        run: node --max-old-space-size=6144 scripts/b2-warm-tier.mjs
+
+  ia-cold:
+    needs: parquet-convert
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Move >180d raw WARCs → Internet Archive
+        env:
+          COLD_PREFIX:          "raw/"
+          COLD_MIN_AGE_DAYS:    "180"
+          COLD_MAX_BYTES:       "107374182400"    # 100 GB per run
+          IA_ACCESS_KEY:        ${{ secrets.IA_ACCESS_KEY }}
+          IA_SECRET_KEY:        ${{ secrets.IA_SECRET_KEY }}
+          IA_COLLECTION:        ${{ vars.IA_COLLECTION }}
+          IA_ITEM_PREFIX:       "lettuce-discovery-"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/ia-cold-tier.mjs
