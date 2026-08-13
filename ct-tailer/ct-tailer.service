@@ -1,0 +1,21 @@
+[Unit]
+Description=Lettuce CT Log Tailer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ct
+WorkingDirectory=/opt/ct-tailer
+EnvironmentFile=/etc/ct-tailer.env
+ExecStart=/usr/bin/node /opt/ct-tailer/ct-tailer.mjs
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/ct-tailer.log
+StandardError=append:/var/log/ct-tailer.log
+# Resource caps (fits comfortably on Oracle Free ARM 4c/24GB VM)
+MemoryMax=4G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
