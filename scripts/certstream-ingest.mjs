@@ -10,8 +10,21 @@ import { putObject } from "./r2.mjs";
 import { gzipSync } from "node:zlib";
 
 const UA = "LettuceVision/1.0 (+https://lettuce.vision)";
-const LOOKBACK_MIN = Number(process.env.LOOKBACK_MIN || 20); // matches cron cadence + slack
-const MAX_DOMAINS = Number(process.env.MAX_DOMAINS || 8000);
+const LOOKBACK_MIN = Number(process.env.LOOKBACK_MIN || 25); // matches cron cadence + slack
+const MAX_DOMAINS = Number(process.env.MAX_DOMAINS || 30000);
+const KEEP_SUBDOMAINS = process.env.KEEP_SUBDOMAINS === "1"; // emit full hostnames, not just eTLD+1
+// Query multiple crt.sh "views" in parallel to broaden coverage per run.
+// Each query returns an independent ~10k slice; we dedupe across them.
+const QUERIES = [
+  { q: "%25", label: "wildcard" },       // broadest — any cert containing at least one char
+  { q: "%25.com", label: "com" },        // .com bias
+  { q: "%25.org", label: "org" },
+  { q: "%25.net", label: "net" },
+  { q: "%25.io", label: "io" },
+  { q: "%25.app", label: "app" },
+  { q: "%25.dev", label: "dev" },
+  { q: "%25.ai", label: "ai" },
+];
 
 // Public suffix short-list. Good-enough for eTLD+1 extraction on 99% of certs.
 const MULTI_TLD = new Set([
@@ -36,10 +49,9 @@ function goodDomain(d) {
   return true;
 }
 
-async function fetchCrtSh() {
-  // crt.sh JSON: recent CT entries. Query returns up to ~10k rows.
-  // We poll for certs issued in the lookback window.
-  const url = `https://crt.sh/?q=%25&output=json&exclude=expired&limit=10000`;
+async function fetchCrtSh(q) {
+  // crt.sh JSON: recent CT entries. Query returns up to ~10k rows per shard.
+  const url = `https://crt.sh/?q=${q}&output=json&exclude=expired&limit=10000`;
   const r = await fetch(url, {
     headers: { "user-agent": UA, "accept": "application/json" },
     signal: AbortSignal.timeout(45000),
@@ -49,26 +61,40 @@ async function fetchCrtSh() {
 }
 
 async function main() {
-  console.log(`certstream-ingest: lookback ${LOOKBACK_MIN} min, max ${MAX_DOMAINS} domains`);
+  console.log(`certstream-ingest: lookback ${LOOKBACK_MIN} min, max ${MAX_DOMAINS} domains, ${QUERIES.length} shards`);
   const cutoff = Date.now() - LOOKBACK_MIN * 60_000;
-  let rows;
-  try { rows = await fetchCrtSh(); }
-  catch (e) { console.error("crt.sh fetch failed:", e.message); return; }
+
+  // Fetch all shards in parallel, tolerate individual failures.
+  const results = await Promise.allSettled(QUERIES.map(async ({ q, label }) => {
+    try {
+      const rows = await fetchCrtSh(q);
+      console.log(`  shard[${label}]: ${rows.length} rows`);
+      return rows;
+    } catch (e) {
+      console.warn(`  shard[${label}] failed: ${e.message}`);
+      return [];
+    }
+  }));
+  const allRows = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
+  console.log(`total rows across shards: ${allRows.length}`);
 
   const seen = new Set();
   const domains = [];
-  for (const row of rows) {
+  for (const row of allRows) {
     const t = Date.parse(row.entry_timestamp || row.not_before || 0);
     if (t && t < cutoff) continue;
     const names = String(row.name_value || "").split("\n");
     for (const raw of names) {
       const host = raw.trim().toLowerCase();
       if (!host) continue;
-      const d = eTLDPlus1(host);
-      if (!d || !goodDomain(d)) continue;
-      if (seen.has(d)) continue;
-      seen.add(d);
-      domains.push(d);
+      const reg = eTLDPlus1(host);
+      if (!reg || !goodDomain(reg)) continue;
+      // Emit either the full hostname (subdomains kept) or just the registrable domain.
+      const emit = KEEP_SUBDOMAINS ? host.replace(/^\*\./, "") : reg;
+      if (!goodDomain(emit)) continue;
+      if (seen.has(emit)) continue;
+      seen.add(emit);
+      domains.push(emit);
       if (domains.length >= MAX_DOMAINS) break;
     }
     if (domains.length >= MAX_DOMAINS) break;

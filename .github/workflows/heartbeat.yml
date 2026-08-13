@@ -23,8 +23,9 @@ jobs:
       - run: npm ci --prefer-offline --no-audit || npm i
       - name: CT log tail → seed domains
         env:
-          LOOKBACK_MIN:         "20"
-          MAX_DOMAINS:          "8000"
+          LOOKBACK_MIN:         "25"
+          MAX_DOMAINS:          "30000"
+          KEEP_SUBDOMAINS:      "1"
           R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
