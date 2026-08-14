@@ -23,6 +23,18 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           R2_PREFIX: ${{ secrets.R2_PREFIX }}
         run: node scripts/rss-firehose.mjs
+      - name: CertStream (crt.sh)
+        continue-on-error: true
+        env:
+          LOOKBACK_MIN: "25"
+          MAX_DOMAINS: "30000"
+          KEEP_SUBDOMAINS: "1"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+        run: node scripts/certstream-ingest.mjs
       - name: Merge hot shards
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

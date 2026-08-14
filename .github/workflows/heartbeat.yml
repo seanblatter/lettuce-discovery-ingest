@@ -13,7 +13,8 @@ concurrency: { group: heartbeat, cancel-in-progress: false }
 
 jobs:
   certstream:
-    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    # Run on every trigger (workflow_dispatch or any of the crons above).
+    # Cheap (~30s) and idempotent — safe to fire hourly/weekly/monthly too.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

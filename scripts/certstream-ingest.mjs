@@ -52,12 +52,23 @@ function goodDomain(d) {
 async function fetchCrtSh(q) {
   // crt.sh JSON: recent CT entries. Query returns up to ~10k rows per shard.
   const url = `https://crt.sh/?q=${q}&output=json&exclude=expired&limit=10000`;
-  const r = await fetch(url, {
-    headers: { "user-agent": UA, "accept": "application/json" },
-    signal: AbortSignal.timeout(45000),
-  });
-  if (!r.ok) throw new Error(`crt.sh ${r.status}`);
-  return await r.json();
+  // Retry with backoff — crt.sh frequently returns 502/504 under load.
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(url, {
+        headers: { "user-agent": UA, "accept": "application/json" },
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (r.status === 429 || r.status >= 500) throw new Error(`crt.sh ${r.status}`);
+      if (!r.ok) throw new Error(`crt.sh ${r.status}`);
+      return await r.json();
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) await new Promise(x => setTimeout(x, 2000 * attempt));
+    }
+  }
+  throw lastErr;
 }
 
 async function main() {
@@ -113,4 +124,4 @@ async function main() {
   console.log(`wrote ${rel} (${(buf.length/1024).toFixed(1)} KB)`);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch(e => { console.error("certstream-ingest error (non-fatal):", e.message); process.exit(0); });
