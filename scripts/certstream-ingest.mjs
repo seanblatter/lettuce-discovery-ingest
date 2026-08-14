@@ -109,8 +109,9 @@ async function main() {
   const seen = new Set();
   const domains = [];
   for (const row of allRows) {
-    const t = Date.parse(row.entry_timestamp || row.not_before || row.not_after || 0);
-    if (t && t < cutoff && !row._nofilter) continue;
+    // crt.sh returns newest-first (limit=10000 → most-recent). Skip timestamp
+    // filter — it drops valid rows because `entry_timestamp` can be null on
+    // some records and CertSpotter uses `not_after` (future).
     const names = row._names || String(row.name_value || "").split("\n");
     for (const raw of names) {
       const host = raw.trim().toLowerCase();
