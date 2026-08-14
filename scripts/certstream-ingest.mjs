@@ -9,15 +9,16 @@
 import { putObject } from "./r2.mjs";
 import { gzipSync } from "node:zlib";
 
-const UA = "LettuceVision/1.0 (+https://lettuce.vision)";
+const UA = "Mozilla/5.0 (compatible; LettuceVisionBot/1.0; +https://lettuce.vision)";
 const LOOKBACK_MIN = Number(process.env.LOOKBACK_MIN || 25); // matches cron cadence + slack
 const MAX_DOMAINS = Number(process.env.MAX_DOMAINS || 30000);
 const KEEP_SUBDOMAINS = process.env.KEEP_SUBDOMAINS === "1"; // emit full hostnames, not just eTLD+1
-// Query multiple crt.sh "views" in parallel to broaden coverage per run.
-// Each query returns an independent ~10k slice; we dedupe across them.
+// Fetch shards sequentially with delay — crt.sh aggressively rate-limits parallel clients.
+const SHARD_DELAY_MS = Number(process.env.SHARD_DELAY_MS || 2000);
+// Query multiple crt.sh "views" to broaden coverage per run.
 const QUERIES = [
   { q: "%25", label: "wildcard" },       // broadest — any cert containing at least one char
-  { q: "%25.com", label: "com" },        // .com bias
+  { q: "%25.com", label: "com" },
   { q: "%25.org", label: "org" },
   { q: "%25.net", label: "net" },
   { q: "%25.io", label: "io" },
@@ -25,6 +26,10 @@ const QUERIES = [
   { q: "%25.dev", label: "dev" },
   { q: "%25.ai", label: "ai" },
 ];
+
+// CertSpotter fallback — free, no auth, higher quality (uses public CT logs directly).
+// https://sslmate.com/certspotter/api  (no key needed for the /issuances endpoint)
+const CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain=%25&include_subdomains=true&expand=dns_names";
 
 // Public suffix short-list. Good-enough for eTLD+1 extraction on 99% of certs.
 const MULTI_TLD = new Set([
@@ -72,35 +77,46 @@ async function fetchCrtSh(q) {
 }
 
 async function main() {
-  console.log(`certstream-ingest: lookback ${LOOKBACK_MIN} min, max ${MAX_DOMAINS} domains, ${QUERIES.length} shards`);
+  console.log(`certstream-ingest: lookback ${LOOKBACK_MIN} min, max ${MAX_DOMAINS} domains, ${QUERIES.length} shards (sequential)`);
   const cutoff = Date.now() - LOOKBACK_MIN * 60_000;
 
-  // Fetch all shards in parallel, tolerate individual failures.
-  const results = await Promise.allSettled(QUERIES.map(async ({ q, label }) => {
+  // Fetch shards SEQUENTIALLY with delay — parallel = instant 429 from crt.sh.
+  const allRows = [];
+  for (const { q, label } of QUERIES) {
     try {
       const rows = await fetchCrtSh(q);
       console.log(`  shard[${label}]: ${rows.length} rows`);
-      return rows;
+      allRows.push(...rows);
     } catch (e) {
       console.warn(`  shard[${label}] failed: ${e.message}`);
-      return [];
     }
-  }));
-  const allRows = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
-  console.log(`total rows across shards: ${allRows.length}`);
+    await new Promise(r => setTimeout(r, SHARD_DELAY_MS));
+  }
+
+  // Fallback: if crt.sh gave us nothing, try CertSpotter (also free, less rate-limited).
+  if (allRows.length === 0) {
+    console.log("crt.sh returned no rows — trying CertSpotter fallback…");
+    try {
+      const rows = await fetchCertSpotter();
+      console.log(`  certspotter: ${rows.length} rows`);
+      allRows.push(...rows);
+    } catch (e) {
+      console.warn(`  certspotter failed: ${e.message}`);
+    }
+  }
+  console.log(`total rows across sources: ${allRows.length}`);
 
   const seen = new Set();
   const domains = [];
   for (const row of allRows) {
-    const t = Date.parse(row.entry_timestamp || row.not_before || 0);
-    if (t && t < cutoff) continue;
-    const names = String(row.name_value || "").split("\n");
+    const t = Date.parse(row.entry_timestamp || row.not_before || row.not_after || 0);
+    if (t && t < cutoff && !row._nofilter) continue;
+    const names = row._names || String(row.name_value || "").split("\n");
     for (const raw of names) {
       const host = raw.trim().toLowerCase();
       if (!host) continue;
       const reg = eTLDPlus1(host);
       if (!reg || !goodDomain(reg)) continue;
-      // Emit either the full hostname (subdomains kept) or just the registrable domain.
       const emit = KEEP_SUBDOMAINS ? host.replace(/^\*\./, "") : reg;
       if (!goodDomain(emit)) continue;
       if (seen.has(emit)) continue;
@@ -113,7 +129,6 @@ async function main() {
   console.log(`extracted ${domains.length} unique registrable domains`);
   if (!domains.length) return;
 
-  // Emit seed docs (u only — real crawl happens later via sitemap pass)
   const lines = domains.map(d => JSON.stringify({
     u: `https://${d}/`, t: d, d: `Newly discovered domain (CT log): ${d}`, c: "", src: "certstream"
   })).join("\n") + "\n";
@@ -122,6 +137,23 @@ async function main() {
   const rel = `hot/certstream-${ts}.ndjson.gz`;
   await putObject(rel, buf, "application/gzip");
   console.log(`wrote ${rel} (${(buf.length/1024).toFixed(1)} KB)`);
+}
+
+// CertSpotter API: returns recent cert issuances with dns_names expanded.
+// Free public endpoint; no key required.
+async function fetchCertSpotter() {
+  const r = await fetch(CERTSPOTTER_URL, {
+    headers: { "user-agent": UA, "accept": "application/json" },
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!r.ok) throw new Error(`certspotter ${r.status}`);
+  const j = await r.json();
+  // Normalize into the row shape we use in main().
+  return (j || []).map(issuance => ({
+    _names: issuance.dns_names || [],
+    not_after: issuance.not_after,
+    _nofilter: true, // CertSpotter always returns fresh — no timestamp filter
+  }));
 }
 
 main().catch(e => { console.error("certstream-ingest error (non-fatal):", e.message); process.exit(0); });
