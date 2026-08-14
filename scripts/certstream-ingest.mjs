@@ -104,6 +104,19 @@ async function main() {
       console.warn(`  certspotter failed: ${e.message}`);
     }
   }
+  // Last resort: hit Google's CT log directly (public HTTP API, no rate-limit,
+  // works from any IP including GitHub Actions runners). Pulls the last
+  // ~2000 entries from Argon (currently active shard).
+  if (allRows.length === 0) {
+    console.log("all aggregators failed — pulling directly from Google CT log…");
+    try {
+      const rows = await fetchGoogleCT();
+      console.log(`  google-ct: ${rows.length} rows`);
+      allRows.push(...rows);
+    } catch (e) {
+      console.warn(`  google-ct failed: ${e.message}`);
+    }
+  }
   console.log(`total rows across sources: ${allRows.length}`);
 
   const seen = new Set();
@@ -155,6 +168,72 @@ async function fetchCertSpotter() {
     not_after: issuance.not_after,
     _nofilter: true, // CertSpotter always returns fresh — no timestamp filter
   }));
+}
+
+// Google's public CT log (Argon 2026, currently active). RFC 6962 protocol.
+// - GET /ct/v1/get-sth  → { tree_size }
+// - GET /ct/v1/get-entries?start=N&end=M  → { entries: [{ leaf_input, ... }] }
+// Then we scan the DER for [2] dNSName tags to extract hostnames.
+// This is the exact same trick ct-tailer.mjs uses. Public, no auth, no rate-limit.
+const GOOGLE_CT_LOG = "https://ct.googleapis.com/logs/us1/argon2026h2";
+
+async function fetchGoogleCT() {
+  const sthR = await fetch(`${GOOGLE_CT_LOG}/ct/v1/get-sth`, {
+    headers: { "user-agent": UA }, signal: AbortSignal.timeout(20_000),
+  });
+  if (!sthR.ok) throw new Error(`get-sth ${sthR.status}`);
+  const { tree_size } = await sthR.json();
+  const end = tree_size - 1;
+  const start = Math.max(0, end - 2047); // pull last ~2048 entries (~4 chunks)
+  const rows = [];
+  for (let s = start; s <= end; s += 256) {
+    const e = Math.min(s + 255, end);
+    const r = await fetch(`${GOOGLE_CT_LOG}/ct/v1/get-entries?start=${s}&end=${e}`, {
+      headers: { "user-agent": UA }, signal: AbortSignal.timeout(45_000),
+    });
+    if (!r.ok) continue;
+    const j = await r.json();
+    for (const entry of j.entries || []) {
+      const names = parseLeafForDnsNames(entry.leaf_input);
+      if (names.length) rows.push({ _names: names, _nofilter: true });
+    }
+  }
+  return rows;
+}
+
+// Extract dNSName SANs by scanning DER for the [2] context tag pattern (0x82 <len> <ascii>).
+// Same technique as ct-tailer.mjs. Not a full ASN.1 parser but reliable for hostname pulls.
+function parseLeafForDnsNames(b64) {
+  const buf = Buffer.from(b64, "base64");
+  if (buf.length < 12) return [];
+  const entryType = buf.readUInt16BE(10);
+  let der;
+  if (entryType === 0) {
+    const certLen = (buf[12] << 16) | (buf[13] << 8) | buf[14];
+    der = buf.subarray(15, 15 + certLen);
+  } else if (entryType === 1) {
+    const off = 12 + 32;
+    const tbsLen = (buf[off] << 16) | (buf[off + 1] << 8) | buf[off + 2];
+    der = buf.subarray(off + 3, off + 3 + tbsLen);
+  } else return [];
+  const out = new Set();
+  for (let i = 0; i < der.length - 4; i++) {
+    if (der[i] !== 0x82) continue;
+    const len = der[i + 1];
+    if (len < 3 || len > 253) continue;
+    let ok = true;
+    for (let j = 0; j < len; j++) {
+      const b = der[i + 2 + j];
+      if (b < 0x20 || b > 0x7e) { ok = false; break; }
+    }
+    if (!ok) continue;
+    const s = der.subarray(i + 2, i + 2 + len).toString("ascii").toLowerCase();
+    if (!/^[a-z0-9*][a-z0-9.\-*]*[a-z0-9]$/.test(s)) continue;
+    if (!s.includes(".")) continue;
+    out.add(s);
+    i += len + 1;
+  }
+  return [...out];
 }
 
 main().catch(e => { console.error("certstream-ingest error (non-fatal):", e.message); process.exit(0); });
