@@ -96,11 +96,15 @@ jobs:
         run: node --max-old-space-size=6144 scripts/httparchive-signals.mjs
 
   # Delta-shard every heartbeat so hot tier stays queryable within minutes.
+  # continue-on-error: reshard may still be building the base shards on a
+  # fresh corpus — the guarded delta-shards.mjs skips missing shards, but we
+  # never want a partial run to page us. Missing bases are logged as skipped.
   delta:
     needs: []
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: always()
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

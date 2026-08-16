@@ -8,10 +8,10 @@ on:
       cc_index_url:
         description: "Common Crawl warc.paths.gz URL"
         default: "https://data.commoncrawl.org/crawl-data/CC-MAIN-2026-30/warc.paths.gz"
-  # Scheduled watchdog disabled 2026-08-14 — corpus is large enough (~99k raws);
-  # run manually via workflow_dispatch if you want to top up.
-  # schedule:
-  #   - cron: "17 */6 * * *"
+  # Re-enabled 2026-08-15 — we're still ~2 orders of magnitude below the 1B
+  # target. Watchdog fires every 6h; concurrency guard below prevents overlap.
+  schedule:
+    - cron: "17 */6 * * *"
 
 concurrency:
   group: ingest

@@ -41,9 +41,23 @@ if (await headExists(prevManifestRel)) {
 
 const manifest = { version, shards: {} };
 
+let skipped = 0;
 for (let i = 0; i < NUM_SHARDS; i++) {
   const name = `shard-${String(i).padStart(3, "0")}.ndjson`;
-  const cur = await readShardDocs(`shards/${name}.gz`);
+  const shardRel = `shards/${name}.gz`;
+
+  // Skip shards that don't exist yet. Reshard is a long-running job and
+  // may not have produced all 128 shards on the first pass; we don't want
+  // heartbeat cron to fail red every 15 minutes just because reshard hasn't
+  // finished. Once reshard populates the shard, the next delta run picks
+  // it up and emits an "added: everything" delta.
+  if (!(await headExists(shardRel))) {
+    skipped++;
+    manifest.shards[i] = { version: null, docs: 0, added: 0, removed: 0, delta_bytes: 0, missing: true };
+    continue;
+  }
+
+  const cur = await readShardDocs(shardRel);
 
   let prev = new Map();
   if (prevManifest?.shards?.[i]?.version) {
@@ -72,4 +86,4 @@ for (let i = 0; i < NUM_SHARDS; i++) {
 
 await putObject(prevManifestRel, JSON.stringify(manifest, null, 2), "application/json");
 await putObject(`shards/deltas/${version}/manifest.json`, JSON.stringify(manifest, null, 2), "application/json");
-console.log(`delta: wrote version ${version}`);
+console.log(`delta: wrote version ${version} (skipped ${skipped}/${NUM_SHARDS} missing shards)`);
