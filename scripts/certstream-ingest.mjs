@@ -151,6 +151,24 @@ async function main() {
   const rel = `hot/certstream-${ts}.ndjson.gz`;
   await putObject(rel, buf, "application/gzip");
   console.log(`wrote ${rel} (${(buf.length/1024).toFixed(1)} KB)`);
+
+  // Heartbeat visibility — bubble the domain count into the Actions run
+  // summary + email digests. At the current 15-min cadence this becomes a
+  // rolling "daily new-domain rate" indicator without any extra R2 writes.
+  // Global reference: ~250k new registrable domains/day per Verisign DNIB;
+  // 1% target = 2,500/day (~26/run at 96 runs/day).
+  const pctOfDailyGlobal = ((domains.length * 96) / 250000 * 100).toFixed(2);
+  const notice = `certstream: +${domains.length} new domains (~${pctOfDailyGlobal}% of daily global new-domain rate at this rate)`;
+  console.log(`::notice title=Heartbeat::${notice}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      const fs = await import("node:fs");
+      fs.appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        `### Heartbeat\n\n- **New domains this run:** ${domains.length}\n- **Extrapolated daily rate:** ~${(domains.length * 96).toLocaleString()}/day\n- **Share of global daily new-domain creation:** ~${pctOfDailyGlobal}% (denominator: 250k/day, Verisign DNIB)\n- **Written to:** \`${rel}\`\n`
+      );
+    } catch {}
+  }
 }
 
 // CertSpotter API: returns recent cert issuances with dns_names expanded.
