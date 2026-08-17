@@ -1,0 +1,33 @@
+# Hot-shards: rebuild the queryable "live web" shard set from certstream
+# + gdelt heartbeat drops. Runs hourly, independent of the big nightly
+# reshard so users see fresh domains within ~1 hour of CT log discovery.
+name: hot-shards
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5 * * * *"    # hourly at :05 (5-min lag after the :00 heartbeat)
+
+concurrency:
+  group: hot-shards
+  cancel-in-progress: true
+
+jobs:
+  reshard-hot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Rebuild hot shards from hot/*.ndjson.gz
+        env:
+          HOT_NUM_SHARDS:        "16"
+          HOT_LOOKBACK_DAYS:     "30"
+          R2_ACCOUNT_ID:         ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:             ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:             ${{ secrets.R2_PREFIX }}
+        run: node scripts/hot-reshard.mjs

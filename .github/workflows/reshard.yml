@@ -1,8 +1,14 @@
 name: reshard
 on:
   workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Raws to process this run (default 200)"
+        required: false
+        default: "200"
   schedule:
-    - cron: "0 4 * * *"     # nightly 04:00 UTC — full reshard + dedup
+    - cron: "15 * * * *"    # hourly at :15 — one BATCH_SIZE batch per run
+
 concurrency:
   group: reshard
   cancel-in-progress: false
@@ -10,18 +16,24 @@ concurrency:
 jobs:
   reshard:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    # Batched: single run touches ≤ BATCH_SIZE raws so it fits in a
+    # standard 20 GB / 7 GB runner. Previous 340-min single-shot design
+    # was OOM'ing + running out of disk. 60-min ceiling is plenty for
+    # BATCH_SIZE=200 (~15-25 min observed).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: npm ci --prefer-offline --no-audit || npm i
-      - name: Reshard raw NDJSON → final gz+br shards
+      - name: Reshard batch → shards/batches/{cursor}/shard-XXX.ndjson.{gz,br}
         env:
           NUM_SHARDS:           "128"
+          BATCH_SIZE:           ${{ inputs.batch_size || '200' }}
+          CONCURRENCY:          "24"
           R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET:            ${{ secrets.R2_BUCKET }}
           R2_PREFIX:            ${{ secrets.R2_PREFIX }}
-        run: node --max-old-space-size=14336 scripts/reshard.mjs
+        run: node --max-old-space-size=6144 scripts/reshard.mjs
