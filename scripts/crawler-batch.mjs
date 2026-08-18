@@ -58,18 +58,47 @@ for (const b of cursor.batches.slice(-3)) {
   for (const u of b.samples || []) recentFetched.add(u);
 }
 
-// ---- source: hot-shards manifest (recent discovery) ----
+// ---- source: hot-shards manifest (recent discovery) + sitemap-urls/ ----
 async function loadCandidateUrls() {
   const urls = new Set();
+  // 1) Hot-shards (freshly-discovered hostnames from ct-tailer/certstream).
   try {
     const buf = await getObjectBuffer("hot-shards/manifest.json");
     const manifest = JSON.parse(buf.toString());
-    if (!Array.isArray(manifest.shards)) return [];
-    // Pull URLs from each shard in parallel.
-    await Promise.all(manifest.shards.map(async (s) => {
-      if (!s.docs) return;
+    if (Array.isArray(manifest.shards)) {
+      await Promise.all(manifest.shards.map(async (s) => {
+        if (!s.docs) return;
+        try {
+          const stream = await getStream(s.path);
+          const text = await readGzipStream(stream);
+          for (const line of text.split("\n")) {
+            if (!line) continue;
+            try {
+              const doc = JSON.parse(line);
+              if (!doc || !doc.u) continue;
+              if (recentFetched.has(doc.u)) continue;
+              urls.add(doc.u);
+              if (urls.size >= BATCH_URLS * 8) return;
+            } catch (_) {}
+          }
+        } catch (e) {
+          console.warn(`  hot-shard ${s.path} failed: ${e.message}`);
+        }
+      }));
+    }
+  } catch (e) {
+    console.error(`hot-shards manifest missing (${e.message})`);
+  }
+  // 2) Sitemap-harvested URLs (deep pages within known sites).
+  try {
+    const files = await listPrefix("sitemap-urls/");
+    // Take most recent 3 daily-folders, in reverse-lex order.
+    const recent = files.filter((f) => /\.ndjson\.gz$/.test(f.Key)).sort((a, b) => b.Key.localeCompare(a.Key)).slice(0, 12);
+    for (const f of recent) {
+      if (urls.size >= BATCH_URLS * 8) break;
+      const rel = f.Key.replace(/^.*?discovery\//, "");
       try {
-        const stream = await getStream(s.path);
+        const stream = await getStream(rel);
         const text = await readGzipStream(stream);
         for (const line of text.split("\n")) {
           if (!line) continue;
@@ -78,16 +107,12 @@ async function loadCandidateUrls() {
             if (!doc || !doc.u) continue;
             if (recentFetched.has(doc.u)) continue;
             urls.add(doc.u);
-            if (urls.size >= BATCH_URLS * 4) return; // sample 4x, we'll politely trim
+            if (urls.size >= BATCH_URLS * 8) break;
           } catch (_) {}
         }
-      } catch (e) {
-        console.warn(`  hot-shard ${s.path} failed: ${e.message}`);
-      }
-    }));
-  } catch (e) {
-    console.error(`hot-shards manifest missing — nothing to crawl (${e.message})`);
-  }
+      } catch (_) {}
+    }
+  } catch (_) {}
   return [...urls];
 }
 
