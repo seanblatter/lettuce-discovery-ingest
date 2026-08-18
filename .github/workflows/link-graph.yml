@@ -1,0 +1,35 @@
+name: link-graph
+on:
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: "Full recompute (LINKGRAPH_RESET=1)"
+        required: false
+        default: "0"
+  schedule:
+    - cron: "55 */3 * * *"   # every 3 hours at :55 — link data changes slowly
+
+concurrency:
+  group: link-graph
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Aggregate outbound-link counts → link-graph/domain-scores.json
+        env:
+          LINKGRAPH_BATCH_SIZE: "300"
+          LINKGRAPH_CONCURRENCY: "20"
+          LINKGRAPH_RESET:      ${{ inputs.reset || '0' }}
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/link-graph.mjs
