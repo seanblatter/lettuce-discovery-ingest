@@ -64,7 +64,13 @@ try {
 }
 
 // ---- Pick raws ----
-const raws = await listPrefix("raw/");
+// Two input roots: `raw/` (Common Crawl WARC parses) and `crawled/` (live
+// crawler output). Both share the same {u,t,d,k,text?} doc schema.
+const [rawList, crawledList] = await Promise.all([
+  listPrefix("raw/"),
+  listPrefix("crawled/"),
+]);
+const raws = [...rawList, ...crawledList];
 raws.sort((a, b) => a.Key.localeCompare(b.Key));
 cursor.totalRaws = raws.length;
 const start = Math.min(cursor.next, raws.length);
@@ -107,7 +113,7 @@ async function processOne(o) {
             [FIELD_BITS.t, doc.t || ""],
             [FIELD_BITS.d, doc.d || ""],
             [FIELD_BITS.u, doc.u.replace(/[^a-z0-9]+/gi, " ")],
-            [FIELD_BITS.k, doc.k || ""],
+            [FIELD_BITS.k, (doc.k || "") + " " + (doc.text || "").slice(0, 4000)],
           ];
           const perTerm = new Map(); // term -> {tf, mask}
           for (const [mask, text] of fields) {

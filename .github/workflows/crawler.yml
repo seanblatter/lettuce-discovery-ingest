@@ -1,0 +1,37 @@
+name: crawler
+on:
+  workflow_dispatch:
+    inputs:
+      batch_urls:
+        description: "URLs to fetch this run"
+        required: false
+        default: "5000"
+  schedule:
+    - cron: "45 * * * *"   # hourly at :45 — offset from index (:35), reshard (:15)
+
+concurrency:
+  group: crawler
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Crawl candidate URLs from hot-shards → crawled/YYYY/MM/DD/*.ndjson.gz
+        env:
+          CRAWL_BATCH_URLS:     ${{ inputs.batch_urls || '5000' }}
+          CRAWL_CONCURRENCY:    "32"
+          CRAWL_PER_HOST_DELAY_MS: "800"
+          CRAWL_TIMEOUT_MS:     "8000"
+          CRAWL_MAX_BYTES:      "512000"
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=4096 scripts/crawler-batch.mjs
