@@ -191,21 +191,20 @@ async function tailLog(log) {
   console.log(`[${log.slug}] time budget reached, saved offset=${offset}`);
 }
 
-async function pool(items, worker, conc) {
-  const running = new Set();
-  for (const it of items) {
-    const p = worker(it).catch(e => console.error(`worker:`, e.message));
-    running.add(p); p.finally(() => running.delete(p));
-    if (running.size >= conc) await Promise.race(running);
-  }
-  await Promise.all(running);
-}
-
 async function main() {
-  console.log(`ct-tailer-action starting: budget=${(RUN_BUDGET_MS/3600000).toFixed(2)}h, batch=${BATCH_SIZE}, conc=${MAX_CONC}`);
+  console.log(`ct-tailer-action starting: budget=${(RUN_BUDGET_MS/3600000).toFixed(2)}h, batch=${BATCH_SIZE}, conc(per-log http)=${MAX_CONC}`);
   const logs = await fetchLogList();
   console.log(`discovered ${logs.length} active CT logs`);
-  await pool(logs, tailLog, MAX_CONC);
+  // Each tailLog runs a long-lived loop until timeUp(). Run all of them
+  // in parallel — they're rate-limited by their own STH refresh sleep, and
+  // Node's event loop has no problem juggling ~40 concurrent HTTP fetches.
+  // (Bug fix: previous pool(conc=8) design only started 8 of 40+ logs
+  //  because tailLog never returns before timeUp, so the pool never picked
+  //  up the remaining 32 logs. This dropped throughput by ~5×.)
+  const periodicFlush = setInterval(() => { flush(false).catch(() => {}); }, 30_000);
+  periodicFlush.unref();
+  await Promise.all(logs.map((l) => tailLog(l).catch((e) => console.error(`[${l.slug}] fatal:`, e.message))));
+  clearInterval(periodicFlush);
   await flush(true);
   console.log(`::notice title=CT Tailer::${totalEmitted.toLocaleString()} unique hostnames emitted this run across ${logs.length} logs.`);
   if (process.env.GITHUB_STEP_SUMMARY) {
