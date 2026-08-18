@@ -1,0 +1,32 @@
+name: ct-tailer
+on:
+  workflow_dispatch:
+  schedule:
+    # Four overlapping 6-hour jobs per day give 24/7 CT coverage without a VM.
+    # Each run picks up from R2-stored offsets, so overlap is safe.
+    - cron: "0 */6 * * *"
+
+concurrency:
+  group: ct-tailer
+  cancel-in-progress: false
+
+jobs:
+  tail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355   # GitHub hard-caps at 360; script self-exits at ~330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefer-offline --no-audit || npm i
+      - name: Tail CT logs → R2 (ct-live/, state at ct-tailer-state/)
+        env:
+          CT_BATCH_SIZE:        "100000"
+          CT_MAX_CONC:          "8"
+          CT_RUN_BUDGET_MS:     "19800000"   # 5.5 h — flush headroom before timeout
+          R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PREFIX:            ${{ secrets.R2_PREFIX }}
+        run: node --max-old-space-size=6144 scripts/ct-tailer-action.mjs
